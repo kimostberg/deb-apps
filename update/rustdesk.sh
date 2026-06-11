@@ -39,7 +39,7 @@ if command -v rustdesk &>/dev/null; then
         mkdir -p "$temp_dir"
 
         # FIX: RustDesk release assets use the tag with 'v' prefix in the URL path
-        rustdesk_url="https://github.com/rustdesk/rustdesk/releases/download/v${latest_rustdesk_version}/rustdesk-${latest_rustdesk_version}-x86_64.deb"
+        rustdesk_url="https://github.com/rustdesk/rustdesk/releases/download/${latest_rustdesk_version}/rustdesk-${latest_rustdesk_version}-x86_64.deb"
 
         wget -O "$temp_dir/rustdesk.deb" "$rustdesk_url"
 
