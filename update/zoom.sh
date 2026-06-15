@@ -35,7 +35,6 @@ if command -v zoom &>/dev/null; then
 
         wget -O "$temp_dir/zoom.deb" "$zoom_url"
 
-        # FIX: use dpkg + nala fix for local .deb to ensure dependencies resolve
         sudo dpkg -i "$temp_dir/zoom.deb" || sudo nala install -f -y
 
         rm -rf "$temp_dir"
