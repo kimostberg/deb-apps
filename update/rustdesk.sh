@@ -38,12 +38,10 @@ if command -v rustdesk &>/dev/null; then
         temp_dir="/tmp/rustdesk"
         mkdir -p "$temp_dir"
 
-        # FIX: RustDesk release assets use the tag with 'v' prefix in the URL path
         rustdesk_url="https://github.com/rustdesk/rustdesk/releases/download/${latest_rustdesk_version}/rustdesk-${latest_rustdesk_version}-x86_64.deb"
 
         wget -O "$temp_dir/rustdesk.deb" "$rustdesk_url"
 
-        # FIX: use dpkg -i + nala install -f for proper local .deb dep resolution
         sudo dpkg -i "$temp_dir/rustdesk.deb" || sudo nala install -f -y
 
         rm -rf "$temp_dir"
