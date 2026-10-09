@@ -1,8 +1,52 @@
 #!/bin/bash
 
-set -euo pipefail  # FIX: exit on error, undefined vars, and pipe failures
+set -euo pipefail  # exit on error, undefined vars, and pipe failures
 
-# FIX: correct binary name for the Nextcloud desktop client
+# --- Qt configuration ---------------------------------------------------
+QT_VERSION="6.10.0"
+QT_ARCH="linux_gcc_64"          # aqtinstall arch name
+QT_SUBDIR="gcc_64"              # resulting subfolder name under the version dir
+QT_ROOT="$HOME/Qt"              # reasonable, non-sudo install location
+QT_PREFIX="$QT_ROOT/$QT_VERSION/$QT_SUBDIR"
+QT_MODULES=(qtwebsockets qt5compat)   # add/remove modules as the build needs them
+
+ensure_qt() {
+    local cmake_cfg="$QT_PREFIX/lib/cmake/Qt6/Qt6Config.cmake"
+    local websockets_cfg="$QT_PREFIX/lib/cmake/Qt6WebSockets/Qt6WebSocketsConfig.cmake"
+
+    if [[ -f "$cmake_cfg" && -f "$websockets_cfg" ]]; then
+        echo "Qt $QT_VERSION (with WebSockets) already present at $QT_PREFIX"
+        return
+    fi
+
+    echo "Qt $QT_VERSION with required modules not found at $QT_PREFIX — installing..."
+
+    if ! command -v aqt &>/dev/null && ! python3 -m aqt --help &>/dev/null 2>&1; then
+        echo "Installing aqtinstall..."
+        pip install --user aqtinstall --break-system-packages
+    fi
+
+    local AQT_CMD="aqt"
+    command -v aqt &>/dev/null || AQT_CMD="python3 -m aqt"
+
+    mkdir -p "$QT_ROOT"
+    $AQT_CMD install-qt linux desktop "$QT_VERSION" "$QT_ARCH" \
+        -O "$QT_ROOT" \
+        -m "${QT_MODULES[@]}"
+
+    if [[ ! -f "$cmake_cfg" ]]; then
+        echo "Qt install finished but Qt6Config.cmake not found at expected path: $cmake_cfg"
+        exit 1
+    fi
+    if [[ ! -f "$websockets_cfg" ]]; then
+        echo "Qt install finished but WebSockets module config not found at expected path: $websockets_cfg"
+        exit 1
+    fi
+
+    echo "Qt $QT_VERSION installed successfully at $QT_PREFIX"
+}
+
+# --- Nextcloud client binary detection ----------------------------------
 if command -v nextcloudcmd &>/dev/null; then
     NEXTCLOUD_BIN="nextcloudcmd"
 elif command -v nextcloud &>/dev/null; then
@@ -27,10 +71,11 @@ echo "Latest Nextcloud version:    $latest_nextcloud_version"
 if [ "$latest_nextcloud_version" != "$installed_nextcloud_version" ]; then
     echo "Updating Nextcloud from $installed_nextcloud_version to $latest_nextcloud_version..."
 
+    ensure_qt
+
     build_dir="/tmp/Nextcloud-build"
     mkdir -p "$build_dir"
 
-    # FIX: use $latest_nextcloud_version instead of hardcoded version
     source_url="https://github.com/nextcloud-releases/desktop/archive/refs/tags/v${latest_nextcloud_version}.tar.gz"
 
     echo "Downloading source..."
@@ -39,7 +84,6 @@ if [ "$latest_nextcloud_version" != "$installed_nextcloud_version" ]; then
     echo "Extracting..."
     tar -xzf "$build_dir/source.tar.gz" -C "$build_dir"
 
-    # FIX: use $latest_nextcloud_version instead of hardcoded directory name
     source_dir="$build_dir/desktop-${latest_nextcloud_version}"
 
     echo "Building..."
@@ -47,7 +91,7 @@ if [ "$latest_nextcloud_version" != "$installed_nextcloud_version" ]; then
     cd "$source_dir/build"
 
     cmake \
-        -DCMAKE_PREFIX_PATH="/usr/lib/cmake/Qt6Keychain;/usr/lib/qt6;/usr/lib/x86_64-linux-gnu/cmake/Qt6;/usr/lib/cmake/Qt6Core5Compat;/usr/lib/cmake/KIO;/usr/lib/cmake/CMocka" \
+        -DCMAKE_PREFIX_PATH="$QT_PREFIX;/usr/lib/cmake/Qt6Keychain;/usr/lib/cmake/Qt6Core5Compat;/usr/lib/cmake/KIO;/usr/lib/cmake/CMocka" \
         -DQT_DEBUG_FIND_PACKAGE=ON \
         ..
 
@@ -56,7 +100,7 @@ if [ "$latest_nextcloud_version" != "$installed_nextcloud_version" ]; then
     echo "Installing..."
     sudo make install
 
-    # FIX: cd away before cleanup so the shell isn't left in a deleted directory
+    # cd away before cleanup so the shell isn't left in a deleted directory
     cd /tmp
     rm -rf "$build_dir"
 

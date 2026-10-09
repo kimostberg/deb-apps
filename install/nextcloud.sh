@@ -2,6 +2,51 @@
 
 set -euo pipefail
 
+# --- Qt configuration ----------------------------------------------------
+QT_VERSION="6.10.0"
+QT_ARCH="linux_gcc_64"                 # aqtinstall arch name
+QT_SUBDIR="gcc_64"                     # resulting subfolder name under the version dir
+QT_ROOT="$HOME/Qt"                     # user-local install, no sudo needed for Qt itself
+QT_PREFIX="$QT_ROOT/$QT_VERSION/$QT_SUBDIR"
+# Add/remove modules here if the build complains about a missing Qt component
+QT_MODULES=(qtwebsockets qt5compat qtdeclarative qtnetworkauth qtsvg qttools qthttpserver)
+
+ensure_qt() {
+    local cmake_cfg="$QT_PREFIX/lib/cmake/Qt6/Qt6Config.cmake"
+    local websockets_cfg="$QT_PREFIX/lib/cmake/Qt6WebSockets/Qt6WebSocketsConfig.cmake"
+
+    if [[ -f "$cmake_cfg" && -f "$websockets_cfg" ]]; then
+        echo "Qt $QT_VERSION (with WebSockets) already present at $QT_PREFIX"
+        return
+    fi
+
+    echo "Qt $QT_VERSION with required modules not found at $QT_PREFIX — installing..."
+
+    if ! command -v aqt &>/dev/null && ! python3 -m aqt --help &>/dev/null 2>&1; then
+        echo "Installing aqtinstall..."
+        pip install --user aqtinstall --break-system-packages
+    fi
+
+    local AQT_CMD="aqt"
+    command -v aqt &>/dev/null || AQT_CMD="python3 -m aqt"
+
+    mkdir -p "$QT_ROOT"
+    $AQT_CMD install-qt linux desktop "$QT_VERSION" "$QT_ARCH" \
+        -O "$QT_ROOT" \
+        -m "${QT_MODULES[@]}"
+
+    if [[ ! -f "$cmake_cfg" ]]; then
+        echo "Qt install finished but Qt6Config.cmake not found at expected path: $cmake_cfg"
+        exit 1
+    fi
+    if [[ ! -f "$websockets_cfg" ]]; then
+        echo "Qt install finished but WebSockets module config not found at expected path: $websockets_cfg"
+        exit 1
+    fi
+
+    echo "Qt $QT_VERSION installed successfully at $QT_PREFIX"
+}
+
 echo "Fetching latest Nextcloud desktop version from GitHub..."
 
 # Fetch the latest version dynamically
@@ -22,54 +67,51 @@ source_dir="$build_dir/desktop-${latest_version}"
 # Create build directory
 mkdir -p "$build_dir"
 
-# Install build dependencies
+# Bootstrap Qt 6.10 (with WebSockets, etc.) before anything else needs it
+ensure_qt
+
+# Install non-Qt build dependencies (Qt itself now comes from ~/Qt, not apt,
+# since Debian's packaged Qt6 is older than what this build needs)
 sudo nala install -y \
     build-essential \
     cmake \
     wget \
     git \
     libp11-dev \
-    qt6-base-dev \
-    qt6-tools-dev \
-    qttools5-dev \
-    qt6-tools-dev-tools \
-    libqt6svg6-dev \
     libssl-dev \
     zlib1g-dev \
     extra-cmake-modules \
     libsecret-1-dev \
-    qt6-websockets-dev \
-    qt6-declarative-dev \
-    qt6-networkauth-dev \
-    qt6-base-dev-tools \
-    qtkeychain-qt6-dev \
     libkf6guiaddons-dev \
     libsqlite3-dev \
     libkf6archive-dev \
     librsvg2-bin \
-    qt6-webengine-dev \
     libkf6kio-dev \
-    qt6-httpserver-dev \
-    libcmocka-dev \
-    libqt6core5compat6-dev  # FIX: removed duplicate qt6-declarative-dev
+    libcmocka-dev
 
-# Build and install KDSingleApplication-qt6
+# Build and install KDSingleApplication-qt6 (into the local Qt prefix, no sudo needed)
 echo "Building KDSingleApplication..."
 git clone https://github.com/KDAB/KDSingleApplication.git /tmp/KDSingleApplication
 cd /tmp/KDSingleApplication
 mkdir build && cd build
-cmake -DCMAKE_INSTALL_PREFIX=/usr -DQT_MAJOR_VERSION=6 ..
+cmake \
+    -DCMAKE_PREFIX_PATH="$QT_PREFIX" \
+    -DCMAKE_INSTALL_PREFIX="$QT_PREFIX" \
+    -DQT_MAJOR_VERSION=6 ..
 make -j"$(nproc)"
-sudo make install  # FIX: added missing sudo
+make install  # no sudo: installing into user-owned $QT_PREFIX
 
-# Build and install Qt6Keychain
+# Build and install Qt6Keychain (into the local Qt prefix, no sudo needed)
 echo "Building Qt6Keychain..."
 git clone https://github.com/frankosterfeld/qtkeychain.git /tmp/Qt6Keychain
 cd /tmp/Qt6Keychain
 mkdir build && cd build
-cmake -DCMAKE_INSTALL_PREFIX=/usr -DQT_MAJOR_VERSION=6 -DBUILD_TESTING=OFF ..
+cmake \
+    -DCMAKE_PREFIX_PATH="$QT_PREFIX" \
+    -DCMAKE_INSTALL_PREFIX="$QT_PREFIX" \
+    -DQT_MAJOR_VERSION=6 -DBUILD_TESTING=OFF ..
 make -j"$(nproc)"
-sudo make install  # FIX: added missing sudo
+make install  # no sudo: installing into user-owned $QT_PREFIX
 
 # Download the source tarball
 echo "Downloading Nextcloud $latest_version source..."
@@ -81,11 +123,11 @@ tar -xzf "$build_dir/source.tar.gz" -C "$build_dir"
 
 # Build Nextcloud
 echo "Building Nextcloud..."
-cd "$source_dir"  # FIX: uses dynamic $source_dir, not hardcoded path
+cd "$source_dir"
 mkdir build
 cd build
 cmake \
-    -DCMAKE_PREFIX_PATH="/usr/lib/cmake/Qt6Keychain;/usr/lib/qt6;/usr/lib/x86_64-linux-gnu/cmake/Qt6;/usr/lib/cmake/Qt6Core5Compat;/usr/lib/cmake/KIO;/usr/lib/cmake/CMocka" \
+    -DCMAKE_PREFIX_PATH="$QT_PREFIX;/usr/lib/cmake/KIO;/usr/lib/cmake/CMocka" \
     -DQT_DEBUG_FIND_PACKAGE=ON \
     ..
 make -j"$(nproc)"
@@ -95,9 +137,9 @@ echo "Installing Nextcloud $latest_version..."
 sudo make install
 
 # Clean up
-cd /tmp  # FIX: cd away before deleting current directory
+cd /tmp
 rm -rf "$build_dir"
 rm -rf /tmp/KDSingleApplication
-rm -rf /tmp/Qt6Keychain  # FIX: added missing Qt6Keychain cleanup
+rm -rf /tmp/Qt6Keychain
 
 echo "Nextcloud $latest_version installed successfully."
