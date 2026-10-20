@@ -96,14 +96,25 @@ UPDATE_DIR="$SELF_DIR/update"
 echo ""
 if [[ -d "$UPDATE_DIR" ]]; then
     echo "[*] Running update scripts from $UPDATE_DIR..."
+    FAILED=()
     for script in "$UPDATE_DIR"/*.sh; do
-        [[ -f "$script" ]] || continue  # skip if no .sh files found
+        [[ -f "$script" ]] || continue
+        name="$(basename "$script")"
         echo ""
-        echo "--- Running: $(basename "$script") ---"
-        bash "$script"
+        echo "--- Running: $name ---"
+        if bash "$script"; then
+            echo "[✓] $name completed successfully"
+        else
+            echo "[✗] $name FAILED (exit code $?)" >&2
+            FAILED+=("$name")
+        fi
     done
     echo ""
-    echo "[*] All update scripts completed."
+    if ((${#FAILED[@]})); then
+        echo "[!] ${#FAILED[@]} script(s) failed: ${FAILED[*]}" >&2
+    else
+        echo "[*] All update scripts completed successfully."
+    fi
 else
     echo "[*] No update/ directory found at $UPDATE_DIR. Skipping."
 fi
